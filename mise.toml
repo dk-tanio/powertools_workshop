@@ -1,0 +1,10 @@
+[tools]
+python = "3.14.1"
+node = "22.18.0"
+uv = "latest"
+
+[env]
+_.python.venv = { path = ".venv" }
+
+[settings]
+idiomatic_version_file_enable_tools = ["python"]
