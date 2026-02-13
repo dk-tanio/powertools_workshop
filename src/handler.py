@@ -1,11 +1,11 @@
-"""Lambda handlers for the book API without Powertools glue code."""
+"""Lambda handlers for the book API using Powertools REST resolver."""
 
-import base64
 import json
 from http import HTTPStatus
-from typing import Any
 
 from aws_lambda_powertools import Logger
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from aws_lambda_powertools.utilities.typing import LambdaContext
 
 from domain.exceptions import (
     BookAlreadyExistsError,
@@ -17,9 +17,11 @@ from infrastructure.dynamodb_repository import DynamoBookRepository
 from services.book_service import BookService
 
 logger = Logger()
+app = APIGatewayRestResolver()
 
 
-def list_books_handler(event: dict[str, Any], context: Any | None = None) -> dict[str, Any]:
+@app.get("/books")
+def list_books_handler() -> Response:
     """書籍一覧取得のLambda"""
     try:
         repository = DynamoBookRepository()
@@ -27,29 +29,22 @@ def list_books_handler(event: dict[str, Any], context: Any | None = None) -> dic
         books = service.list_books()
     except RepositoryOperationError:
         logger.error("Repository operation failed")
-        return {
-            "statusCode": int(HTTPStatus.INTERNAL_SERVER_ERROR),
-            "body": json.dumps({"message": "Internal server error"}),
-        }
+        return Response(
+            status_code=int(HTTPStatus.INTERNAL_SERVER_ERROR),
+            body=json.dumps({"message": "Internal server error"}),
+        )
 
-    return {"statusCode": int(HTTPStatus.OK), "body": books.model_dump_json()}
+    return Response(status_code=int(HTTPStatus.OK), body=books.model_dump_json())
 
 
-@logger.inject_lambda_context(log_event=True)
-def create_book_handler(event: dict[str, Any], context: Any | None = None) -> dict[str, Any]:
+@app.post("/books")
+def create_book_handler() -> Response:
     """書籍作成のLambda"""
-    body = event.get("body")
-    if not body:
-        body_data: dict[str, Any] = {}
-    else:
-        if event.get("isBase64Encoded"):
-            body = base64.b64decode(body).decode("utf-8")
-        body_data = json.loads(body)
+    body_data = app.current_event.json_body or {}
     title = Title(body_data.get("title"))
     author = Author(body_data.get("author"))
     published_year = PublishedYear(body_data.get("published_year"))
     summary = Summary(body_data.get("summary"))
-
     try:
         repository = DynamoBookRepository()
         service = BookService(repository=repository)
@@ -58,65 +53,52 @@ def create_book_handler(event: dict[str, Any], context: Any | None = None) -> di
         )
     except BookAlreadyExistsError as error:
         logger.warning("Book already exists")
-        return {
-            "statusCode": int(HTTPStatus.CONFLICT),
-            "body": json.dumps({"message": str(error)}),
-        }
+        return Response(
+            status_code=int(HTTPStatus.CONFLICT),
+            body=json.dumps({"message": str(error)}),
+        )
     except RepositoryOperationError:
         logger.error(msg="Repository operation failed")
-        return {
-            "statusCode": int(HTTPStatus.INTERNAL_SERVER_ERROR),
-            "body": json.dumps({"message": "Internal server error"}),
-        }
+        return Response(
+            status_code=int(HTTPStatus.INTERNAL_SERVER_ERROR),
+            body=json.dumps({"message": "Internal server error"}),
+        )
 
     logger.info(msg="Book successfully created", extra={"book_id": book.id})
-    return {"statusCode": int(HTTPStatus.CREATED), "body": book.model_dump_json()}
+    return Response(status_code=int(HTTPStatus.CREATED), body=book.model_dump_json())
 
 
-def get_book_handler(event: dict[str, Any], context: Any | None = None) -> dict[str, Any]:
+@app.get("/books/<book_id>")
+def get_book_handler(book_id: str) -> Response:
     """書籍単体取得のLambda"""
-    path_parameters = event.get("pathParameters") or {}
-    book_id = path_parameters.get("id")
-    if not book_id:
-        raise ValueError("path parameter 'id' is required")
     try:
         repository = DynamoBookRepository()
         service = BookService(repository=repository)
         book = service.get_book(book_id=book_id)
     except BookNotFoundError as error:
         logger.warning(msg="Book not found")
-        return {
-            "statusCode": int(HTTPStatus.NOT_FOUND),
-            "body": json.dumps({"message": str(error)}),
-        }
+        return Response(
+            status_code=int(HTTPStatus.NOT_FOUND),
+            body=json.dumps({"message": str(error)}),
+        )
     except RepositoryOperationError:
         logger.error(msg="Repository operation failed")
-        return {
-            "statusCode": int(HTTPStatus.INTERNAL_SERVER_ERROR),
-            "body": json.dumps({"message": "Internal server error"}),
-        }
+        return Response(
+            status_code=int(HTTPStatus.INTERNAL_SERVER_ERROR),
+            body=json.dumps({"message": "Internal server error"}),
+        )
 
-    return {"statusCode": int(HTTPStatus.OK), "body": json.dumps(book.model_dump())}
+    return Response(status_code=int(HTTPStatus.OK), body=book.model_dump_json())
 
 
-def update_book_handler(event: dict[str, Any], context: Any | None = None) -> dict[str, Any]:
+@app.put("/books/<book_id>")
+def update_book_handler(book_id: str) -> Response:
     """書籍更新のLambda"""
-    path_parameters = event.get("pathParameters") or {}
-    book_id = path_parameters.get("id")
-    if not book_id:
-        raise ValueError("path parameter 'id' is required")
-    body = event.get("body")
-    if not body:
-        body_data: dict[str, Any] = {}
-    else:
-        if event.get("isBase64Encoded"):
-            body = base64.b64decode(body).decode("utf-8")
-        body_data = json.loads(body)
+    body_data = app.current_event.json_body or {}
     title = Title(body_data.get("title"))
     author = Author(body_data.get("author"))
     published_year = PublishedYear(body_data.get("published_year"))
     summary = Summary(body_data.get("summary"))
-
     try:
         repository = DynamoBookRepository()
         service = BookService(repository=repository)
@@ -129,39 +111,46 @@ def update_book_handler(event: dict[str, Any], context: Any | None = None) -> di
         )
     except BookNotFoundError as error:
         logger.warning(msg="Book not found while updating")
-        return {
-            "statusCode": int(HTTPStatus.NOT_FOUND),
-            "body": json.dumps({"message": str(error)}),
-        }
+        return Response(
+            status_code=int(HTTPStatus.NOT_FOUND),
+            body=json.dumps({"message": str(error)}),
+        )
     except RepositoryOperationError:
         logger.error(msg="Repository operation failed")
-        return {
-            "statusCode": int(HTTPStatus.INTERNAL_SERVER_ERROR),
-            "body": json.dumps({"message": "Internal server error"}),
-        }
-    return {"statusCode": int(HTTPStatus.OK), "body": json.dumps(book.model_dump())}
+        return Response(
+            status_code=int(HTTPStatus.INTERNAL_SERVER_ERROR),
+            body=json.dumps({"message": "Internal server error"}),
+        )
+
+    return Response(status_code=int(HTTPStatus.OK), body=book.model_dump_json())
 
 
-def delete_book_handler(event: dict[str, Any], context: Any | None = None) -> dict[str, Any]:
+@app.delete("/books/<book_id>")
+def delete_book_handler(book_id: str) -> Response:
     """書籍削除のLambda"""
-    path_parameters = event.get("pathParameters") or {}
-    book_id = path_parameters.get("id")
-    if not book_id:
-        raise ValueError("path parameter 'id' is required")
     try:
         repository = DynamoBookRepository()
         service = BookService(repository=repository)
         service.delete_book(book_id=book_id)
     except BookNotFoundError as error:
         logger.warning(msg="Book not found while deleting")
-        return {
-            "statusCode": int(HTTPStatus.NOT_FOUND),
-            "body": json.dumps({"message": str(error)}),
-        }
+        return Response(
+            status_code=int(HTTPStatus.NOT_FOUND),
+            body=json.dumps({"message": str(error)}),
+        )
     except RepositoryOperationError:
         logger.error(msg="Repository operation failed")
-        return {
-            "statusCode": int(HTTPStatus.INTERNAL_SERVER_ERROR),
-            "body": json.dumps({"message": "Internal server error"}),
-        }
-    return {"statusCode": int(HTTPStatus.NO_CONTENT), "body": ""}
+        return Response(
+            status_code=int(HTTPStatus.INTERNAL_SERVER_ERROR),
+            body=json.dumps({"message": "Internal server error"}),
+        )
+
+    return Response(
+        status_code=int(HTTPStatus.NO_CONTENT),
+        body="",
+    )
+
+
+def lambda_handler(event: dict, context: LambdaContext) -> dict:
+    """Entrypoint for AWS Lambda."""
+    return app.resolve(event, context)
