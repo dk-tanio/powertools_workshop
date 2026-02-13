@@ -12,8 +12,8 @@ from domain.exceptions import (
     BookNotFoundError,
     RepositoryOperationError,
 )
-from domain.object_values import Author, PublishedYear, Summary, Title
 from infrastructure.dynamodb_repository import DynamoBookRepository
+from schema import BookInformationSchema
 from services.book_service import BookService
 
 logger = Logger()
@@ -38,18 +38,16 @@ def list_books_handler() -> Response:
 
 
 @app.post("/books")
-def create_book_handler() -> Response:
+def create_book_handler(body: BookInformationSchema) -> Response:
     """書籍作成のLambda"""
-    body_data = app.current_event.json_body or {}
-    title = Title(body_data.get("title"))
-    author = Author(body_data.get("author"))
-    published_year = PublishedYear(body_data.get("published_year"))
-    summary = Summary(body_data.get("summary"))
     try:
         repository = DynamoBookRepository()
         service = BookService(repository=repository)
         book = service.create_book(
-            title=title, author=author, published_year=published_year, summary=summary
+            title=body.title,
+            author=body.author,
+            published_year=body.published_year,
+            summary=body.summary,
         )
     except BookAlreadyExistsError as error:
         logger.warning("Book already exists")
@@ -92,22 +90,17 @@ def get_book_handler(book_id: str) -> Response:
 
 
 @app.put("/books/<book_id>")
-def update_book_handler(book_id: str) -> Response:
+def update_book_handler(book_id: str, body: BookInformationSchema) -> Response:
     """書籍更新のLambda"""
-    body_data = app.current_event.json_body or {}
-    title = Title(body_data.get("title"))
-    author = Author(body_data.get("author"))
-    published_year = PublishedYear(body_data.get("published_year"))
-    summary = Summary(body_data.get("summary"))
     try:
         repository = DynamoBookRepository()
         service = BookService(repository=repository)
         book = service.update_book(
             book_id=book_id,
-            title=title,
-            author=author,
-            published_year=published_year,
-            summary=summary,
+            title=body.title,
+            author=body.author,
+            published_year=body.published_year,
+            summary=body.summary,
         )
     except BookNotFoundError as error:
         logger.warning(msg="Book not found while updating")
