@@ -3,6 +3,7 @@
 import os
 
 import boto3
+from aws_lambda_powertools import Logger
 from botocore.exceptions import ClientError
 
 from domain.entity import Book
@@ -13,6 +14,8 @@ from domain.exceptions import (
 )
 from domain.repositories import IBookRepository
 from services.dto import BookList
+
+logger = Logger(child=True)
 
 
 class DynamoBookRepository(IBookRepository):
@@ -30,6 +33,7 @@ class DynamoBookRepository(IBookRepository):
         try:
             response = self.table.scan()
         except ClientError as error:
+            logger.append_keys(operation="list_books", error_detail=str(error))
             raise RepositoryOperationError(str(error)) from error
 
         items = [Book.model_validate(item) for item in response.get("Items", [])]
@@ -42,8 +46,18 @@ class DynamoBookRepository(IBookRepository):
         try:
             self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(id)")
         except ClientError as error:
+            logger.append_keys(
+                operation="create_book",
+                book_id=item["id"],
+                created_at=item["created_at"],
+                updated_at=item["updated_at"],
+            )
             if error.response["Error"].get("Code") == "ConditionalCheckFailedException":
+                logger.append_keys(
+                    error_code="ConditionalCheckFailedException", error_reason="already_exists"
+                )
                 raise BookAlreadyExistsError(str(error)) from error
+            logger.append_keys(error_detail=str(error))
             raise RepositoryOperationError(str(error)) from error
         return book
 
@@ -52,10 +66,12 @@ class DynamoBookRepository(IBookRepository):
         try:
             response = self.table.get_item(Key={"id": book_id})
         except ClientError as error:
+            logger.append_keys(operation="get_book", book_id=book_id, error_detail=str(error))
             raise RepositoryOperationError(str(error)) from error
 
         item = response.get("Item")
         if not item:
+            logger.append_keys(operation="get_book", book_id=book_id, error_reason="not_found")
             raise BookNotFoundError(f"Book {book_id} not found")
         return Book.model_validate(item)
 
@@ -66,8 +82,18 @@ class DynamoBookRepository(IBookRepository):
         try:
             self.table.put_item(Item=item, ConditionExpression="attribute_exists(id)")
         except ClientError as error:
+            logger.append_keys(
+                operation="update_book",
+                book_id=item["id"],
+                created_at=item["created_at"],
+                updated_at=item["updated_at"],
+            )
             if error.response["Error"].get("Code") == "ConditionalCheckFailedException":
+                logger.append_keys(
+                    error_reason="not_found", error_code="ConditionalCheckFailedException"
+                )
                 raise BookNotFoundError(str(error)) from error
+            logger.append_keys(error_detail=str(error))
             raise RepositoryOperationError(str(error)) from error
         return book
 
@@ -76,6 +102,11 @@ class DynamoBookRepository(IBookRepository):
         try:
             self.table.delete_item(Key={"id": book_id}, ConditionExpression="attribute_exists(id)")
         except ClientError as error:
+            logger.append_keys(operation="delete_book", book_id=book_id)
             if error.response["Error"].get("Code") == "ConditionalCheckFailedException":
+                logger.append_keys(
+                    error_reason="not_found", error_code="ConditionalCheckFailedException"
+                )
                 raise BookNotFoundError(str(error)) from error
+            logger.append_keys(error_detail=str(error))
             raise RepositoryOperationError(str(error)) from error
