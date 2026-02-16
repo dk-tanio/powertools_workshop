@@ -8,6 +8,10 @@ on:
         required: false
         default: "PowertoolsWorkshopBookApi"
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   deploy:
     name: Deploy CDK
@@ -20,6 +24,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::471112928072:role/github-oidc-role
+          role-session-name: GitHubActions-${{ github.run_id }}
+          aws-region: ap-northeast-1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
